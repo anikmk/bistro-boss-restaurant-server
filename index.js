@@ -34,6 +34,7 @@ async function run() {
     const menuCollection = client.db("bistroDB").collection("menu")
     const reviewsCollection = client.db("bistroDB").collection("reviews")
     const cartCollection = client.db("bistroDB").collection("carts")
+    const paymentCollection = client.db("bistroDB").collection("payments")
 
     // jwt releted api
     app.post('/jwt',async(req,res)=>{
@@ -187,7 +188,6 @@ async function run() {
     app.post('/create-payment-intent',async(req,res)=>{
       const {price} = req.body;
       const amount = parseInt(price*100);
-      console.log(amount,'insite the amount')
       const paymentIntent = await stripe.paymentIntents.create({
         amount:amount,
         currency:'usd',
@@ -197,6 +197,50 @@ async function run() {
         clientSecret:paymentIntent.client_secret
       })
 
+    })
+    app.get('/payments/:email',verifyToken,async(req,res)=>{
+      const query = {email:req.params.email}
+      if(req.params.email !== req.decoded.email){
+        return res.status(403).send({message:'forbidden access'})
+      }
+      const result = await paymentCollection.find(query).toArray();
+      res.send(result);
+    })
+
+    app.post('/payments',async(req,res)=>{
+      const payment = req.body;
+      const paymentResult = await paymentCollection.insertOne(payment);
+      // carefully deleted item;
+      const query = {_id:{
+        $in: payment.cartIds.map(id=> new ObjectId(id))
+
+      }};
+      const deleteResult = await cartCollection.deleteMany(query);
+      console.log('payment info',payment);
+      res.send({paymentResult,deleteResult});
+    })
+    // stats analytices
+    app.get('/admin-stats', verifyToken,verifyAdmin, async(req,res)=>{
+      const users = await userCollection.estimatedDocumentCount();
+      const menuItems = await menuCollection.estimatedDocumentCount();
+      const orders = await paymentCollection.estimatedDocumentCount();
+      const result = await paymentCollection.aggregate([
+        {
+          $group:{
+            _id:null,
+            totalRevienue:{
+              $sum:'$price'
+            }
+          }
+        }
+      ]).toArray();
+      const revenue = result.length > 0 ? result[0].totalRevienue : 0;
+      res.send({
+        users,
+        menuItems,
+        orders,
+        revenue
+      })
     })
 
     // Send a ping to confirm a successful connection
